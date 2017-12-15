@@ -28,12 +28,14 @@ class Linker(object):
 
     def find_cycles(self):
         try:
-            cycles = nx.algorithms.find_cycle(self.graph)
+            cycles = nx.algorithms.find_cycle(self.graph, orientation='reverse')
         except nx.exception.NetworkXNoCycle:
             return None
 
         if cycles:
-            return " --> ".join([".".join(node) for node in cycles])
+            cycle_nodes = [c[0] for c in cycles[::-1]]
+            cycle_nodes += [cycle_nodes[0]]
+            return " --> ".join(cycle_nodes)
 
         return None
 
