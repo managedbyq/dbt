@@ -33,7 +33,7 @@ class Linker(object):
             return None
 
         if cycles:
-            cycle_nodes = [c[0] for c in cycles[::-1]]
+            cycle_nodes = [c[0] for c in cycles]
             cycle_nodes += [cycle_nodes[0]]
             return " --> ".join(cycle_nodes)
 
