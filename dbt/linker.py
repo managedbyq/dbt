@@ -28,7 +28,10 @@ class Linker(object):
 
     def find_cycles(self):
         try:
-            cycles = nx.algorithms.find_cycle(self.graph, orientation='reverse')
+            # We create our edges backwards, so it's necessary to "reverse"
+            # the check for cycles.
+            cycles = nx.algorithms.find_cycle(self.graph,
+                                              orientation='reverse')
         except nx.exception.NetworkXNoCycle:
             return None
 
