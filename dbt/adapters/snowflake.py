@@ -237,7 +237,6 @@ class SnowflakeAdapter(PostgresAdapter):
         cols_sql = ", ".join(c for c in agate_table.column_names)
 
         for chunk in chunks(agate_table.rows, 10000):
-            print('in chunk')
             bindings = []
             placeholders = []
 
