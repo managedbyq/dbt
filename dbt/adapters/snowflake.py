@@ -2,6 +2,7 @@ from __future__ import absolute_import
 
 import re
 
+import agate
 import snowflake.connector
 import snowflake.connector.errors
 
@@ -13,6 +14,7 @@ import dbt.flags as flags
 
 from dbt.adapters.postgres import PostgresAdapter
 from dbt.contracts.connection import validate_connection
+from dbt.utils import chunks
 from dbt.logger import GLOBAL_LOGGER as logger
 
 
@@ -224,3 +226,32 @@ class SnowflakeAdapter(PostgresAdapter):
         res = cursor.fetchone()
 
         logger.debug("Cancel query '{}': {}".format(connection_name, res))
+
+    @classmethod
+    def convert_number_type(cls, agate_table, col_idx):
+        decimals = agate_table.aggregate(agate.MaxPrecision(col_idx))
+        return "number(38, 4)" if decimals else "integer"
+
+    @classmethod
+    def load_csv_rows(cls, profile, schema, table_name, agate_table):
+        cols_sql = ", ".join(c for c in agate_table.column_names)
+
+        for chunk in chunks(agate_table.rows, 10000):
+            print('in chunk')
+            bindings = []
+            placeholders = []
+
+            for row in chunk:
+                bindings += row
+                placeholders.append("({})".format(
+                    ", ".join("%s" for _ in agate_table.column_names)))
+
+                sql = ('insert into {}.{} ({}) values {}'
+                       .format(cls.quote(schema),
+                               cls.quote(table_name),
+                               cols_sql,
+                               ",\n".join(placeholders)))
+
+            cls.add_query(profile, sql,
+                          bindings=bindings,
+                          abridge_sql_log=True)
