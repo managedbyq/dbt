@@ -174,7 +174,7 @@ class PostgresAdapter(dbt.adapters.default.DefaultAdapter):
     @classmethod
     def convert_number_type(cls, agate_table, col_idx):
         decimals = agate_table.aggregate(agate.MaxPrecision(col_idx))
-        return "numeric" if decimals else "integer"
+        return "float8" if decimals else "integer"
 
     @classmethod
     def convert_boolean_type(cls, agate_table, col_idx):

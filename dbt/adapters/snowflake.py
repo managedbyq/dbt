@@ -228,11 +228,6 @@ class SnowflakeAdapter(PostgresAdapter):
         logger.debug("Cancel query '{}': {}".format(connection_name, res))
 
     @classmethod
-    def convert_number_type(cls, agate_table, col_idx):
-        decimals = agate_table.aggregate(agate.MaxPrecision(col_idx))
-        return "number(38, 4)" if decimals else "integer"
-
-    @classmethod
     def load_csv_rows(cls, profile, schema, table_name, agate_table):
         cols_sql = ", ".join(c for c in agate_table.column_names)
 
