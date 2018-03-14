@@ -14,7 +14,6 @@ import dbt.flags as flags
 
 from dbt.adapters.postgres import PostgresAdapter
 from dbt.contracts.connection import validate_connection
-from dbt.utils import chunks
 from dbt.logger import GLOBAL_LOGGER as logger
 
 

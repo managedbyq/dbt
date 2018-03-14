@@ -7,6 +7,7 @@ import dbt.compat
 import dbt.exceptions
 import agate
 
+from dbt.utils import chunks
 from dbt.logger import GLOBAL_LOGGER as logger
 
 
