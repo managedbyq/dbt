@@ -213,19 +213,23 @@ class PostgresAdapter(dbt.adapters.default.DefaultAdapter):
 
     @classmethod
     def load_csv_rows(cls, profile, schema, table_name, agate_table):
-        bindings = []
-        placeholders = []
         cols_sql = ", ".join(c for c in agate_table.column_names)
 
-        for row in agate_table.rows:
-            bindings += row
-            placeholders.append("({})".format(
-                ", ".join("%s" for _ in agate_table.column_names)))
+        for chunk in chunks(agate_table.rows, 10000):
+            bindings = []
+            placeholders = []
 
-        sql = ('insert into {}.{} ({}) values {}'
-               .format(cls.quote(schema),
-                       cls.quote(table_name),
-                       cols_sql,
-                       ",\n".join(placeholders)))
+            for row in chunk:
+                bindings += row
+                placeholders.append("({})".format(
+                    ", ".join("%s" for _ in agate_table.column_names)))
 
-        cls.add_query(profile, sql, bindings=bindings, abridge_sql_log=True)
+                sql = ('insert into {}.{} ({}) values {}'
+                       .format(cls.quote(schema),
+                               cls.quote(table_name),
+                               cols_sql,
+                               ",\n".join(placeholders)))
+
+            cls.add_query(profile, sql,
+                          bindings=bindings,
+                          abridge_sql_log=True)

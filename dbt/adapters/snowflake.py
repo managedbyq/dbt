@@ -226,26 +226,3 @@ class SnowflakeAdapter(PostgresAdapter):
         res = cursor.fetchone()
 
         logger.debug("Cancel query '{}': {}".format(connection_name, res))
-
-    @classmethod
-    def load_csv_rows(cls, profile, schema, table_name, agate_table):
-        cols_sql = ", ".join(c for c in agate_table.column_names)
-
-        for chunk in chunks(agate_table.rows, 10000):
-            bindings = []
-            placeholders = []
-
-            for row in chunk:
-                bindings += row
-                placeholders.append("({})".format(
-                    ", ".join("%s" for _ in agate_table.column_names)))
-
-                sql = ('insert into {}.{} ({}) values {}'
-                       .format(cls.quote(schema),
-                               cls.quote(table_name),
-                               cols_sql,
-                               ",\n".join(placeholders)))
-
-            cls.add_query(profile, sql,
-                          bindings=bindings,
-                          abridge_sql_log=True)
