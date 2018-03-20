@@ -252,12 +252,12 @@ def print_run_result_error(result):
             rollbar_sql = ("Compiled SQL: \n\n{}\n".format(sql_text))
             error_msg = error_path + "\n" + error_result + "\n\n" + rollbar_sql
             rollbar.report_message(message=error_msg)
-        else:
-            logger_sql = ("Compiled SQL: " + cyan("\n\n{}\n".format(sql_text)))
-            logger.info(yellow(error_path))
-            logger.info(error_result)
-            logger.info("")
-            logger.info(logger_sql)
+
+        logger_sql = ("Compiled SQL: " + cyan("\n\n{}\n".format(sql_text)))
+        logger.info(yellow(error_path))
+        logger.info(error_result)
+        logger.info("")
+        logger.info(logger_sql)
 
     else:
         first = True
