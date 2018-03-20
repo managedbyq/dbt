@@ -1,4 +1,4 @@
-# from freezegun import freeze_time
+from freezegun import freeze_time
 from nose.plugins.attrib import attr
 from test.integration.base import DBTIntegrationTest
 
@@ -45,7 +45,7 @@ class TestTimezones(DBTIntegrationTest):
             from {schema}.timezones
         """.format(schema=self.unique_schema())
 
-    # @freeze_time("2017-01-01 03:00:00", tz_offset=0)
+    @freeze_time("2017-01-01 03:00:00", tz_offset=0)
     @attr(type='postgres')
     def test_run_started_at(self):
         self.run_dbt(['run'])
