@@ -3,7 +3,7 @@ from setuptools import find_packages
 from distutils.core import setup
 
 
-package_name = "dbt"
+package_name = "q-dbt"
 package_version = "0.10.0"
 
 setup(
@@ -12,10 +12,10 @@ setup(
     description="data build tool",
     author="Fishtown Analytics",
     author_email="info@fishtownanalytics.com",
-    url="https://github.com/fishtown-analytics/dbt",
+    url="https://github.com/managedbyq/q-dbt",
     packages=find_packages(),
     package_data={
-        'dbt': [
+        'q-dbt': [
             'include/global_project/dbt_project.yml',
             'include/global_project/macros/*.sql',
             'include/global_project/macros/**/*.sql',
