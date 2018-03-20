@@ -228,13 +228,7 @@ def print_run_status_line(results):
 
 
 def print_run_result_error(result):
-    rollbar_token = os.environ.get('ROLLBAR_ACCESS_TOKEN')
-    rollbar_env = os.environ.get('ENV_NAME')
-    if rollbar_token and rollbar_env:
-        rollbar.init(rollbar_token, rollbar_env)
-
     logger.info("")
-
     if result.failed:
         error_path = "Failure in {} {} ({})".format(
             result.node.get('resource_type'),
@@ -250,16 +244,20 @@ def print_run_result_error(result):
             sql_text = f.read()
             f.close()
 
-        rollbar_sql = ("Compiled SQL: \n\n{}\n".format(sql_text))
-        logger_sql = ("Compiled SQL: " + cyan("\n\n{}\n".format(sql_text)))
+        rollbar_token = os.environ.get('ROLLBAR_ACCESS_TOKEN')
+        rollbar_env = os.environ.get('ENV_NAME')
 
-        error_message = error_path + "\n" + error_result + "\n\n" + rollbar_sql
-        rollbar.report_message(message=error_message)
-
-        logger.info(yellow(error_path))
-        logger.info(error_result)
-        logger.info("")
-        logger.info(logger_sql)
+        if rollbar_token and rollbar_env:
+            rollbar.init(rollbar_token, rollbar_env)
+            rollbar_sql = ("Compiled SQL: \n\n{}\n".format(sql_text))
+            error_msg = error_path + "\n" + error_result + "\n\n" + rollbar_sql
+            rollbar.report_message(message=error_msg)
+        else:
+            logger_sql = ("Compiled SQL: " + cyan("\n\n{}\n".format(sql_text)))
+            logger.info(yellow(error_path))
+            logger.info(error_result)
+            logger.info("")
+            logger.info(logger_sql)
 
     else:
         first = True
