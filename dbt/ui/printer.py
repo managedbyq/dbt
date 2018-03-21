@@ -1,4 +1,3 @@
-
 from dbt.logger import GLOBAL_LOGGER as logger
 from dbt.utils import get_materialization
 from dbt.node_types import NodeType
@@ -15,7 +14,6 @@ COLOR_FG_GREEN = dbt.ui.colors.COLORS['green']
 COLOR_FG_YELLOW = dbt.ui.colors.COLORS['yellow']
 COLOR_FG_CYAN = dbt.ui.colors.COLORS['cyan']
 COLOR_RESET_ALL = dbt.ui.colors.COLORS['reset_all']
-
 
 
 def use_colors():
