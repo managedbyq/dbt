@@ -238,7 +238,7 @@ def print_run_result_error(result):
         error_result = "  Got {} results, expected 0.".format(result.status)
 
         if result.node.get('build_path') is not None:
-            ROOT = os.path.abspath(__file__ + '/../../../../../../../')
+            ROOT = os.path.abspath(__file__ + '/../../../../../../')
             sql_file = ROOT + 'dbt/' + result.node.get('build_path')
             f = open(sql_file, "r")
             sql_text = f.read()
