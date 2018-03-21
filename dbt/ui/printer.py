@@ -231,8 +231,7 @@ def print_run_status_line(results):
 def print_run_result_error(result):
     rollbar_token = os.environ.get('ROLLBAR_ACCESS_TOKEN')
     rollbar_env = os.environ.get('ENV_NAME')
-    rollbar.init(rollbar_token, rollbar_env)
-    
+
     logger.info("")
     if result.failed:
         error_path = "Failure in {} {} ({})".format(
@@ -246,6 +245,7 @@ def print_run_result_error(result):
             sql = result.node.get('compiled_sql')
 
         if rollbar_token and rollbar_env:
+            rollbar.init(rollbar_token, rollbar_env)
             rollbar_sql = ("Compiled SQL: \n\n{}\n".format(sql))
             error_msg = error_path + "\n" + error_result + "\n\n" + rollbar_sql
             rollbar.report_message(message=error_msg)
@@ -266,6 +266,7 @@ def print_run_result_error(result):
                 logger.info(line)
 
         if rollbar_token and rollbar_env:
+            rollbar.init(rollbar_token, rollbar_env)
             rollbar.report_message(message=result.error)
 
 
