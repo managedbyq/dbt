@@ -16,6 +16,11 @@ COLOR_FG_YELLOW = dbt.ui.colors.COLORS['yellow']
 COLOR_FG_CYAN = dbt.ui.colors.COLORS['cyan']
 COLOR_RESET_ALL = dbt.ui.colors.COLORS['reset_all']
 
+rollbar_token = os.environ.get('ROLLBAR_ACCESS_TOKEN')
+rollbar_env = os.environ.get('ENV_NAME')
+
+rollbar.init(rollbar_token, rollbar_env)
+
 
 def use_colors():
     global USE_COLORS
@@ -237,19 +242,8 @@ def print_run_result_error(result):
 
         error_result = "  Got {} results, expected 0.".format(result.status)
 
-        if result.node.get('build_path') is not None:
-            ROOT = os.path.abspath(__file__ + '/../../../../../../')
-            sql_file = ROOT + 'dbt/' + result.node.get('build_path')
-            f = open(sql_file, "r")
-            sql_text = f.read()
-            f.close()
-
-        rollbar_token = os.environ.get('ROLLBAR_ACCESS_TOKEN')
-        rollbar_env = os.environ.get('ENV_NAME')
-
-        if rollbar_token and rollbar_env:
-            rollbar.init(rollbar_token, rollbar_env)
-            rollbar_sql = ("Compiled SQL: \n\n{}\n".format(sql_text))
+        if rollbar_token and rollbar_env and result.node.get('compiled_sql'):
+            rollbar_sql = ("Compiled SQL: \n\n{}\n".format(result.node.get('compiled_sql')))
             error_msg = error_path + "\n" + error_result + "\n\n" + rollbar_sql
             rollbar.report_message(message=error_msg)
 
@@ -267,6 +261,8 @@ def print_run_result_error(result):
                 first = False
             else:
                 logger.info(line)
+        if rollbar_token and rollbar_env:
+            rollbar.report_message(message=result.error)
 
 
 def print_end_of_run_summary(num_errors, early_exit=False):
