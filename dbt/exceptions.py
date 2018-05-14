@@ -1,5 +1,7 @@
 from dbt.compat import basestring
 from dbt.logger import GLOBAL_LOGGER as logger
+import rollbar
+import os
 
 
 class Exception(BaseException):
@@ -133,15 +135,27 @@ class FailedToConnectException(DatabaseException):
 from dbt.utils import get_materialization  # noqa
 
 
+def report_error_message(msg):
+    rollbar_token = os.environ.get('ROLLBAR_ACCESS_TOKEN')
+    rollbar_env = os.environ.get('ENV_NAME')
+    
+    if rollbar_token and rollbar_env:
+        rollbar.init(rollbar_token, rollbar_env)
+    rollbar.report_message(message=msg)
+
+
 def raise_compiler_error(msg, node=None):
+    report_error_message(msg)
     raise CompilationException(msg, node)
 
 
 def raise_database_error(msg, node=None):
+    report_error_message(msg)
     raise DatabaseException(msg, node)
 
 
 def raise_dependency_error(msg):
+    report_error_message(msg)
     raise DependencyException(msg)
 
 
