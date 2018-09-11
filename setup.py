@@ -8,6 +8,8 @@ def read(fname):
 
 package_name = "q-dbt"
 package_version = "0.11.0"
+description = """dbt (data build tool) is a command line tool that helps \
+analysts and engineers transform data in their warehouse more effectively"""
 
 setup(
     name=package_name,
