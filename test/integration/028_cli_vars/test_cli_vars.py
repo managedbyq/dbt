@@ -14,8 +14,8 @@ class TestCLIVars(DBTIntegrationTest):
 
     @attr(type='postgres')
     def test__cli_vars_longform(self):
-        self.use_default_project()
         self.use_profile('postgres')
+        self.use_default_project()
 
         cli_vars = {
             "variable_1": "abc",
@@ -24,8 +24,10 @@ class TestCLIVars(DBTIntegrationTest):
                 "value": "jkl"
             }
         }
-        self.run_dbt(["run", "--vars", yaml.dump(cli_vars)])
-        self.run_dbt(["test"])
+        results = self.run_dbt(["run", "--vars", yaml.dump(cli_vars)])
+        self.assertEqual(len(results), 1)
+        results = self.run_dbt(["test", "--vars", yaml.dump(cli_vars)])
+        self.assertEqual(len(results), 3)
 
 
 class TestCLIVarsSimple(DBTIntegrationTest):
@@ -39,16 +41,20 @@ class TestCLIVarsSimple(DBTIntegrationTest):
 
     @attr(type='postgres')
     def test__cli_vars_shorthand(self):
-        self.use_default_project()
         self.use_profile('postgres')
+        self.use_default_project()
 
-        self.run_dbt(["run", "--vars", "simple: abc"])
-        self.run_dbt(["test"])
+        results = self.run_dbt(["run", "--vars", "simple: abc"])
+        self.assertEqual(len(results), 1)
+        results = self.run_dbt(["test", "--vars", "simple: abc"])
+        self.assertEqual(len(results), 1)
 
     @attr(type='postgres')
     def test__cli_vars_longer(self):
-        self.use_default_project()
         self.use_profile('postgres')
+        self.use_default_project()
 
-        self.run_dbt(["run", "--vars", "{simple: abc, unused: def}"])
-        self.run_dbt(["test"])
+        results = self.run_dbt(["run", "--vars", "{simple: abc, unused: def}"])
+        self.assertEqual(len(results), 1)
+        results = self.run_dbt(["test", "--vars", "{simple: abc, unused: def}"])
+        self.assertEqual(len(results), 1)

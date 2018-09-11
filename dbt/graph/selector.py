@@ -3,6 +3,7 @@ from dbt.logger import GLOBAL_LOGGER as logger
 
 from dbt.utils import is_enabled, get_materialization, coalesce
 from dbt.node_types import NodeType
+from dbt.contracts.graph.parsed import ParsedNode
 
 SELECTOR_PARENTS = '+'
 SELECTOR_CHILDREN = '+'
@@ -33,7 +34,7 @@ def parse_spec(node_spec):
         index_end -= 1
 
     node_selector = node_spec[index_start:index_end]
-    qualified_node_name = tuple(node_selector.split('.'))
+    qualified_node_name = node_selector.split('.')
 
     return {
         "select_parents": select_parents,
@@ -91,7 +92,7 @@ def get_nodes_by_qualified_name(graph, qualified_name):
 
         else:
             for package_name in package_names:
-                local_qualified_node_name = (package_name,) + qualified_name
+                local_qualified_node_name = [package_name] + qualified_name
                 if is_selected_node(fqn_ish, local_qualified_node_name):
                     yield node
                     break
@@ -164,9 +165,9 @@ def select_nodes(graph, raw_include_specs, raw_exclude_specs):
 
 
 class NodeSelector(object):
-    def __init__(self, linker, flat_graph):
+    def __init__(self, linker, manifest):
         self.linker = linker
-        self.flat_graph = flat_graph
+        self.manifest = manifest
 
     def get_valid_nodes(self, graph):
         valid = []
@@ -182,7 +183,7 @@ class NodeSelector(object):
 
         include = coalesce(include, ['*'])
         exclude = coalesce(exclude, [])
-        tags = coalesce(tags, set())
+        tags = coalesce(tags, [])
 
         to_run = self.get_valid_nodes(graph)
         filtered_graph = graph.subgraph(to_run)
@@ -193,7 +194,8 @@ class NodeSelector(object):
             node = graph.node.get(node_name)
 
             matched_resource = node.get('resource_type') in resource_types
-            matched_tags = (len(tags) == 0 or bool(node.get('tags') & tags))
+            matched_tags = (len(tags) == 0 or
+                            bool(set(node.get('tags', [])) & set(tags)))
 
             if matched_resource and matched_tags:
                 filtered_nodes.add(node_name)
@@ -205,13 +207,12 @@ class NodeSelector(object):
         is_ephemeral = get_materialization(node) == 'ephemeral'
         return is_model and is_ephemeral
 
-    def get_ancestor_ephemeral_nodes(self, flat_graph, linked_graph,
-                                     selected_nodes):
+    def get_ancestor_ephemeral_nodes(self, selected_nodes):
 
         node_names = {
-            node: flat_graph['nodes'].get(node).get('name')
+            node: self.manifest.nodes.get(node).name
             for node in selected_nodes
-            if node in flat_graph['nodes']
+            if node in self.manifest.nodes
         }
 
         include_spec = [
@@ -219,11 +220,11 @@ class NodeSelector(object):
             for node in selected_nodes if node in node_names
         ]
 
-        all_ancestors = select_nodes(linked_graph, include_spec, [])
+        all_ancestors = select_nodes(self.linker.graph, include_spec, [])
 
         res = []
         for ancestor in all_ancestors:
-            ancestor_node = flat_graph['nodes'].get(ancestor, None)
+            ancestor_node = self.manifest.nodes.get(ancestor, None)
 
             if ancestor_node and self.is_ephemeral_model(ancestor_node):
                 res.append(ancestor)
@@ -236,11 +237,8 @@ class NodeSelector(object):
         resource_types = query.get('resource_types')
         tags = query.get('tags')
 
-        flat_graph = self.flat_graph
-        graph = self.linker.graph
-
         selected = self.get_selected(include, exclude, resource_types, tags)
-        addins = self.get_ancestor_ephemeral_nodes(flat_graph, graph, selected)
+        addins = self.get_ancestor_ephemeral_nodes(selected)
 
         return selected | addins
 
@@ -251,7 +249,9 @@ class NodeSelector(object):
 
         concurrent_dependency_list = []
         for level in dependency_list:
-            node_level = [self.linker.get_node(node) for node in level]
+            node_level = [
+                ParsedNode(**self.linker.get_node(node)) for node in level
+            ]
             concurrent_dependency_list.append(node_level)
 
         return concurrent_dependency_list

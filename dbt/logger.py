@@ -1,5 +1,6 @@
 import dbt.compat
 import logging
+import logging.handlers
 import os
 import sys
 
@@ -33,6 +34,14 @@ logger.addHandler(stdout_handler)
 logger.setLevel(logging.DEBUG)
 logging.getLogger().setLevel(logging.CRITICAL)
 
+# Quiet these down in the logs
+logging.getLogger('botocore').setLevel(logging.INFO)
+logging.getLogger('requests').setLevel(logging.INFO)
+logging.getLogger('urllib3').setLevel(logging.INFO)
+logging.getLogger('google').setLevel(logging.INFO)
+logging.getLogger('snowflake.connector').setLevel(logging.INFO)
+logging.getLogger('parsedatetime').setLevel(logging.INFO)
+
 # Redirect warnings through our logging setup
 # They will be logged to a file below
 logging.captureWarnings(True)
@@ -63,7 +72,7 @@ def initialize_logger(debug_mode=False, path=None):
 
     if debug_mode:
         stdout_handler.setFormatter(
-            logging.Formatter('%(asctime)-18s: %(message)s'))
+            logging.Formatter('%(asctime)-18s (%(threadName)s): %(message)s'))
         stdout_handler.setLevel(logging.DEBUG)
 
     if path is not None:
@@ -82,7 +91,7 @@ def initialize_logger(debug_mode=False, path=None):
         logdir_handler.addFilter(color_filter)
 
         logdir_handler.setFormatter(
-            logging.Formatter('%(asctime)-18s: %(message)s'))
+            logging.Formatter('%(asctime)-18s (%(threadName)s): %(message)s'))
         logdir_handler.setLevel(logging.DEBUG)
 
         logger.addHandler(logdir_handler)

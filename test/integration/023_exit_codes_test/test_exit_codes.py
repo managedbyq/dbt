@@ -35,52 +35,60 @@ class TestExitCodes(DBTIntegrationTest):
 
     @attr(type='postgres')
     def test_exit_code_run_succeed(self):
-        self.use_default_project()
         self.use_profile('postgres')
-        _, success = self.run_dbt_and_check(['run', '--model', 'good'])
+        self.use_default_project()
+        results, success = self.run_dbt_and_check(['run', '--model', 'good'])
+        self.assertEqual(len(results), 1)
         self.assertTrue(success)
         self.assertTableDoesExist('good')
 
     @attr(type='postgres')
     def test__exit_code_run_fail(self):
-        self.use_default_project()
         self.use_profile('postgres')
-        _, success = self.run_dbt_and_check(['run', '--model', 'bad'])
+        self.use_default_project()
+        results, success = self.run_dbt_and_check(['run', '--model', 'bad'])
+        self.assertEqual(len(results), 1)
         self.assertFalse(success)
         self.assertTableDoesNotExist('bad')
 
     @attr(type='postgres')
     def test___schema_test_pass(self):
-        self.use_default_project()
         self.use_profile('postgres')
-        _, success = self.run_dbt_and_check(['run', '--model', 'good'])
+        self.use_default_project()
+        results, success = self.run_dbt_and_check(['run', '--model', 'good'])
+        self.assertEqual(len(results), 1)
         self.assertTrue(success)
-        _, success = self.run_dbt_and_check(['test', '--model', 'good'])
+        results, success = self.run_dbt_and_check(['test', '--model', 'good'])
+        self.assertEqual(len(results), 1)
         self.assertTrue(success)
 
     @attr(type='postgres')
     def test___schema_test_fail(self):
-        self.use_default_project()
         self.use_profile('postgres')
-        _, success = self.run_dbt_and_check(['run', '--model', 'dupe'])
+        self.use_default_project()
+        results, success = self.run_dbt_and_check(['run', '--model', 'dupe'])
+        self.assertEqual(len(results), 1)
         self.assertTrue(success)
-        _, success = self.run_dbt_and_check(['test', '--model', 'dupe'])
+        results, success = self.run_dbt_and_check(['test', '--model', 'dupe'])
+        self.assertEqual(len(results), 1)
         self.assertFalse(success)
 
     @attr(type='postgres')
     def test___compile(self):
-        self.use_default_project()
         self.use_profile('postgres')
-        _, success = self.run_dbt_and_check(['compile'])
+        self.use_default_project()
+        results, success = self.run_dbt_and_check(['compile'])
+        self.assertEqual(len(results), 7)
         self.assertTrue(success)
 
     @attr(type='postgres')
     def test___archive_pass(self):
-        self.use_default_project()
         self.use_profile('postgres')
+        self.use_default_project()
 
         self.run_dbt_and_check(['run', '--model', 'good'])
-        _, success = self.run_dbt_and_check(['archive'])
+        results, success = self.run_dbt_and_check(['archive'])
+        self.assertEqual(len(results), 1)
         self.assertTableDoesExist('good_archive')
         self.assertTrue(success)
 
@@ -115,13 +123,15 @@ class TestExitCodesArchiveFail(DBTIntegrationTest):
 
     @attr(type='postgres')
     def test___archive_fail(self):
-        self.use_default_project()
         self.use_profile('postgres')
+        self.use_default_project()
 
-        _, success = self.run_dbt_and_check(['run', '--model', 'good'])
+        results, success = self.run_dbt_and_check(['run', '--model', 'good'])
         self.assertTrue(success)
+        self.assertEqual(len(results), 1)
 
-        _, success = self.run_dbt_and_check(['archive'])
+        results, success = self.run_dbt_and_check(['archive'])
+        self.assertEqual(len(results), 1)
         self.assertTableDoesNotExist('good_archive')
         self.assertFalse(success)
 
@@ -191,7 +201,8 @@ class TestExitCodesSeed(DBTIntegrationTest):
 
     @attr(type='postgres')
     def test_seed(self):
-        _, success = self.run_dbt_and_check(['seed'])
+        results, success = self.run_dbt_and_check(['seed'])
+        self.assertEqual(len(results), 1)
         self.assertTrue(success)
 
 class TestExitCodesSeedFail(DBTIntegrationTest):

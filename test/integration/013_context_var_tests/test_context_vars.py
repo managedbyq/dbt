@@ -1,8 +1,8 @@
 from nose.plugins.attrib import attr
 from test.integration.base import DBTIntegrationTest
 
-import dbt.flags
 import os
+
 
 class TestContextVars(DBTIntegrationTest):
 
@@ -86,13 +86,17 @@ class TestContextVars(DBTIntegrationTest):
 
     @attr(type='postgres')
     def test_env_vars_dev(self):
-        self.run_dbt(['run'])
+        results = self.run_dbt(['run'])
+        self.assertEqual(len(results), 1)
         ctx = self.get_ctx_vars()
 
-        self.assertEqual(ctx['this'], '"{}"."context__dbt_tmp"'.format(self.unique_schema()))
+        self.assertEqual(
+            ctx['this'],
+            '"{}"."context"'.format(self.unique_schema()))
+
         self.assertEqual(ctx['this.name'], 'context')
         self.assertEqual(ctx['this.schema'], self.unique_schema())
-        self.assertEqual(ctx['this.table'], 'context__dbt_tmp')
+        self.assertEqual(ctx['this.table'], 'context')
 
         self.assertEqual(ctx['target.dbname'], 'dbt')
         self.assertEqual(ctx['target.host'], 'database')
@@ -108,13 +112,17 @@ class TestContextVars(DBTIntegrationTest):
 
     @attr(type='postgres')
     def test_env_vars_prod(self):
-        self.run_dbt(['run', '--target', 'prod'])
+        results = self.run_dbt(['run', '--target', 'prod'])
+        self.assertEqual(len(results), 1)
         ctx = self.get_ctx_vars()
 
-        self.assertEqual(ctx['this'], '"{}"."context__dbt_tmp"'.format(self.unique_schema()))
+        self.assertEqual(
+            ctx['this'],
+            '"{}"."context"'.format(self.unique_schema()))
+
         self.assertEqual(ctx['this.name'], 'context')
         self.assertEqual(ctx['this.schema'], self.unique_schema())
-        self.assertEqual(ctx['this.table'], 'context__dbt_tmp')
+        self.assertEqual(ctx['this.table'], 'context')
 
         self.assertEqual(ctx['target.dbname'], 'dbt')
         self.assertEqual(ctx['target.host'], 'database')

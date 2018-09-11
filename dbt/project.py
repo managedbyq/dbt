@@ -3,7 +3,6 @@ import pprint
 import copy
 import hashlib
 import re
-from voluptuous import Required, Invalid
 
 import dbt.deprecations
 import dbt.contracts.connection
@@ -12,7 +11,11 @@ import dbt.clients.jinja
 import dbt.compat
 import dbt.context.common
 import dbt.clients.system
+import dbt.ui.printer
+import dbt.links
 
+from dbt.api.object import APIObject
+from dbt.utils import deep_merge
 from dbt.logger import GLOBAL_LOGGER as logger  # noqa
 
 default_project_cfg = {
@@ -25,6 +28,7 @@ default_project_cfg = {
     'outputs': {'default': {}},
     'target': 'default',
     'models': {},
+    'quoting': {},
     'profile': None,
     'packages': [],
     'modules-path': 'dbt_modules'
@@ -66,6 +70,9 @@ class Project(object):
 
         self.cfg = default_project_cfg.copy()
         self.cfg.update(cfg)
+        # docs paths defaults to the exact value of source-paths
+        if 'docs-paths' not in self.cfg:
+            self.cfg['docs-paths'] = self.cfg['source-paths'][:]
         self.profiles = default_profiles.copy()
         self.profiles.update(profiles)
         self.profiles_dir = profiles_dir
@@ -91,14 +98,14 @@ class Project(object):
         if self.cfg.get('models') is None:
             self.cfg['models'] = {}
 
+        if self.cfg.get('quoting') is None:
+            self.cfg['quoting'] = {}
+
         if self.cfg['models'].get('vars') is None:
             self.cfg['models']['vars'] = {}
 
         global_vars = dbt.utils.parse_cli_vars(getattr(args, 'vars', '{}'))
-        if 'vars' not in self.cfg['models']:
-            self.cfg['models']['vars'] = {}
-
-        self.cfg['models']['vars'].update(global_vars)
+        self.cfg['cli_vars'] = global_vars
 
     def __str__(self):
         return pprint.pformat({'project': self.cfg, 'profiles': self.profiles})
@@ -141,11 +148,15 @@ class Project(object):
 
             compiled[key] = compiled_val
 
+        if self.args and hasattr(self.args, 'threads') and self.args.threads:
+            compiled['threads'] = self.args.threads
+
         return compiled
 
     def compile_and_update_target(self):
         target = self.cfg['target']
-        self.cfg['outputs'][target].update(self.run_environment())
+        run_env = self.run_environment()
+        self.cfg['outputs'][target].update(run_env)
 
     def run_environment(self):
         target_name = self.cfg['target']
@@ -153,9 +164,17 @@ class Project(object):
             target_cfg = self.cfg['outputs'][target_name]
             return self.compile_target(target_cfg)
         else:
-            raise DbtProfileError(
-                    "'target' config was not found in profile entry for "
-                    "'{}'".format(target_name), self)
+
+            outputs = self.cfg.get('outputs', {}).keys()
+            output_names = [" - {}".format(output) for output in outputs]
+
+            msg = ("The profile '{}' does not have a target named '{}'. The "
+                   "valid target names for this profile are:\n{}".format(
+                        self.profile_to_load,
+                        target_name,
+                        "\n".join(output_names)))
+
+            raise DbtProfileError(msg, self)
 
     def get_target(self):
         ctx = self.context().get('env').copy()
@@ -196,32 +215,38 @@ class Project(object):
                  'underscores, and must start with a letter.'), self)
 
         db_type = target_cfg.get('type')
-        validator = dbt.contracts.connection.credentials_mapping.get(db_type)
+        validator = dbt.contracts.connection.CREDENTIALS_MAPPING.get(db_type)
 
         if validator is None:
-            valid_types = dbt.contracts.connection.credentials_mapping.keys()
+            valid_types = dbt.contracts.connection.CREDENTIALS_MAPPING.keys()
             raise DbtProjectError(
                 "Invalid db type '{}' should be one of [{}]".format(
                     db_type,
                     ", ".join(valid_types)), self)
 
-        validator = validator.extend({
-            Required('type'): dbt.compat.basestring,
-            Required('threads'): int,
-        })
+        # This is python so I guess we'll just make a class here...
+        # it might be wise to tack an extend classmethod onto APIObject,
+        # similar to voluptous, to do all the deep merge stuff for us and spit
+        # out a new class.
+        class CredentialsValidator(APIObject):
+            SCHEMA = deep_merge(
+                validator.SCHEMA,
+                {
+                    'properties': {
+                        'type': {'type': 'string'},
+                        'threads': {'type': 'integer'},
+                    },
+                    'required': (
+                        validator.SCHEMA.get('required', []) +
+                        ['type', 'threads']
+                    ),
+                }
+            )
 
         try:
-            validator(target_cfg)
-        except Invalid as e:
-            if 'extra keys not allowed' in str(e):
-                raise DbtProjectError(
-                    "Extra project configuration '{}' is not recognized"
-                    .format('.'.join(e.path)), self)
-            else:
-                # TODO : does this fail if eg. project is missing?
-                raise DbtProjectError(
-                    "Expected project configuration '{}' was not supplied"
-                    .format('.'.join(e.path)), self)
+            CredentialsValidator(**target_cfg)
+        except dbt.exceptions.ValidationException as e:
+            raise DbtProjectError(str(e), self)
 
     def hashed_name(self):
         if self.cfg.get("name", None) is None:

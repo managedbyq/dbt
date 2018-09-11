@@ -1,10 +1,10 @@
 import json
 import os
-import pytz
-import voluptuous
 
 from dbt.adapters.factory import get_adapter
-from dbt.compat import basestring, to_string
+from dbt.compat import basestring
+from dbt.node_types import NodeType
+from dbt.contracts.graph.parsed import ParsedMacro, ParsedNode
 
 import dbt.clients.jinja
 import dbt.clients.agate_helper
@@ -30,10 +30,12 @@ class DatabaseWrapper(object):
     functions.
     """
 
-    def __init__(self, model, adapter, profile):
+    def __init__(self, model, adapter, profile, project):
         self.model = model
         self.adapter = adapter
         self.profile = profile
+        self.project = project
+        self.Relation = adapter.Relation
 
         # Fun with metaprogramming
         # Most adapter functions take `profile` as the first argument, and
@@ -42,16 +44,21 @@ class DatabaseWrapper(object):
         for context_function in self.adapter.context_functions:
             setattr(self,
                     context_function,
-                    self.wrap_with_profile_and_model_name(context_function))
+                    self.wrap(context_function, (self.profile, self.project,)))
+
+        for profile_function in self.adapter.profile_functions:
+            setattr(self,
+                    profile_function,
+                    self.wrap(profile_function, (self.profile,)))
 
         for raw_function in self.adapter.raw_functions:
             setattr(self,
                     raw_function,
                     getattr(self.adapter, raw_function))
 
-    def wrap_with_profile_and_model_name(self, fn):
+    def wrap(self, fn, arg_prefix):
         def wrapped(*args, **kwargs):
-            args = (self.profile,) + args
+            args = arg_prefix + args
             kwargs['model_name'] = self.model.get('name')
             return getattr(self.adapter, fn)(*args, **kwargs)
 
@@ -65,14 +72,16 @@ class DatabaseWrapper(object):
             self.profile, self.model.get('name'))
 
 
-def _add_macros(context, model, flat_graph):
+def _add_macros(context, model, manifest):
     macros_to_add = {'global': [], 'local': []}
 
-    for unique_id, macro in flat_graph.get('macros', {}).items():
-        package_name = macro.get('package_name')
+    for unique_id, macro in manifest.macros.items():
+        if macro.resource_type != NodeType.Macro:
+            continue
+        package_name = macro.package_name
 
         macro_map = {
-            macro.get('name'): macro.get('generator')(context)
+            macro.name: macro.generator(context)
         }
 
         if context.get(package_name) is None:
@@ -81,7 +90,7 @@ def _add_macros(context, model, flat_graph):
         context.get(package_name, {}) \
                .update(macro_map)
 
-        if package_name == model.get('package_name'):
+        if package_name == model.package_name:
             macros_to_add['local'].append(macro_map)
         elif package_name == dbt.include.GLOBAL_PROJECT_NAME:
             macros_to_add['global'].append(macro_map)
@@ -110,9 +119,20 @@ def _add_tracking(context):
 
 
 def _add_validation(context):
+    def validate_any(*args):
+        def inner(value):
+            for arg in args:
+                if isinstance(arg, type) and isinstance(value, arg):
+                    return
+                elif value == arg:
+                    return
+            raise dbt.exceptions.ValidationException(
+                'Expected value "{}" to be one of {}'
+                .format(value, ','.join(map(str, args))))
+        return inner
+
     validation_utils = dbt.utils.AttrDict({
-        'any': voluptuous.Any,
-        'all': voluptuous.All,
+        'any': validate_any,
     })
 
     return dbt.utils.merge(
@@ -175,17 +195,29 @@ class Var(object):
     NoneVarError = "Supplied var '{}' is undefined in config:\nVars supplied "\
                    "to {} = {}"
 
-    def __init__(self, model, context):
+    def __init__(self, model, context, overrides):
         self.model = model
         self.context = context
 
+        # These are hard-overrides (eg. CLI vars) that should take
+        # precedence over context-based var definitions
+        self.overrides = overrides
+
         if isinstance(model, dict) and model.get('unique_id'):
-            self.local_vars = model.get('config', {}).get('vars')
+            local_vars = model.get('config', {}).get('vars', {})
             self.model_name = model.get('name')
+        elif isinstance(model, ParsedMacro):
+            local_vars = {}  # macros have no config
+            self.model_name = model.name
+        elif isinstance(model, ParsedNode):
+            local_vars = model.config.get('vars', {})
+            self.model_name = model.name
         else:
             # still used for wrapping
             self.model_name = model.nice_name
-            self.local_vars = model.config.get('vars', {})
+            local_vars = model.config.get('vars', {})
+
+        self.local_vars = dbt.utils.merge(local_vars, overrides)
 
     def pretty_dict(self, data):
         return json.dumps(data, sort_keys=True, indent=4)
@@ -204,10 +236,9 @@ class Var(object):
         raw = self.local_vars[var_name]
         if raw is None:
             pretty_vars = self.pretty_dict(self.local_vars)
-            model_name = dbt.utils.get_model_name_or_none(self.model)
             dbt.exceptions.raise_compiler_error(
                 self.NoneVarError.format(
-                    var_name, model_name, pretty_vars
+                    var_name, self.model_name, pretty_vars
                 ),
                 self.model
             )
@@ -272,19 +303,48 @@ def _return(value):
     raise dbt.exceptions.MacroReturn(value)
 
 
-def generate(model, project, flat_graph, provider=None):
-    """
-    Not meant to be called directly. Call with either:
-        dbt.context.parser.generate
-    or
-        dbt.context.runtime.generate
-    """
+def get_this_relation(db_wrapper, project_cfg, profile, model):
+    return db_wrapper.adapter.Relation.create_from_node(
+        profile, model)
+
+
+def create_relation(relation_type, quoting_config):
+
+    class RelationWithContext(relation_type):
+        @classmethod
+        def create(cls, *args, **kwargs):
+            quote_policy = quoting_config
+
+            if 'quote_policy' in kwargs:
+                quote_policy = dbt.utils.merge(
+                    quote_policy,
+                    kwargs.pop('quote_policy'))
+
+            return relation_type.create(*args,
+                                        quote_policy=quote_policy,
+                                        **kwargs)
+
+    return RelationWithContext
+
+
+def create_adapter(adapter_type, relation_type):
+
+    class AdapterWithContext(adapter_type):
+
+        Relation = relation_type
+
+    return AdapterWithContext
+
+
+def generate_base(model, model_dict, project_cfg, manifest, source_config,
+                  provider):
+    """Generate the common aspects of the config dict."""
     if provider is None:
         raise dbt.exceptions.InternalException(
             "Invalid provider given to context: {}".format(provider))
 
-    target_name = project.get('target')
-    profile = project.get('outputs').get(target_name)
+    target_name = project_cfg.get('target')
+    profile = project_cfg.get('outputs').get(target_name)
     target = profile.copy()
     target.pop('pass', None)
     target['name'] = target_name
@@ -293,39 +353,72 @@ def generate(model, project, flat_graph, provider=None):
     context = {'env': target}
     schema = profile.get('schema', 'public')
 
-    pre_hooks = model.get('config', {}).get('pre-hook')
-    post_hooks = model.get('config', {}).get('post-hook')
+    pre_hooks = None
+    post_hooks = None
 
-    db_wrapper = DatabaseWrapper(model, adapter, profile)
+    relation_type = create_relation(adapter.Relation,
+                                    project_cfg.get('quoting'))
 
+    db_wrapper = DatabaseWrapper(model_dict,
+                                 create_adapter(adapter, relation_type),
+                                 profile,
+                                 project_cfg)
     context = dbt.utils.merge(context, {
         "adapter": db_wrapper,
-        "column": dbt.schema.Column,
-        "config": provider.Config(model),
+        "api": {
+            "Relation": relation_type,
+            "Column": adapter.Column,
+        },
+        "column": adapter.Column,
+        "config": provider.Config(model_dict, source_config),
         "env_var": _env_var,
         "exceptions": dbt.exceptions,
         "execute": provider.execute,
         "flags": dbt.flags,
-        "graph": flat_graph,
+        # TODO: Do we have to leave this in?
+        "graph": manifest.to_flat_graph(),
         "log": log,
-        "model": model,
+        "model": model_dict,
         "modules": {
             "pytz": pytz,
             "datetime": datetime
         },
         "post_hooks": post_hooks,
         "pre_hooks": pre_hooks,
-        "ref": provider.ref(model, project, profile, flat_graph),
+        "ref": provider.ref(db_wrapper, model, project_cfg,
+                            profile, manifest),
         "return": _return,
-        "schema": model.get('schema', schema),
-        "sql": model.get('injected_sql'),
+        "schema": schema,
+        "sql": None,
         "sql_now": adapter.date_function(),
         "fromjson": fromjson,
         "tojson": tojson,
         "target": target,
-        "this": dbt.utils.Relation(profile, adapter, model, use_temp=True),
         "try_or_compiler_error": try_or_compiler_error(model)
     })
+
+    # Operations do not represent database relations, so there should be no
+    # 'this' variable in the context for operations. The Operation branch
+    # below should be removed in a future release. The fake relation below
+    # mirrors the historical implementation, without causing errors around
+    # the missing 'alias' attribute for operations
+    #
+    # https://github.com/fishtown-analytics/dbt/issues/878
+    if model.resource_type == NodeType.Operation:
+        this = db_wrapper.adapter.Relation.create(
+                schema=target['schema'],
+                identifier=model.name
+        )
+    else:
+        this = get_this_relation(db_wrapper, project_cfg, profile, model_dict)
+
+    context["this"] = this
+    return context
+
+
+def modify_generated_context(context, model, model_dict, project_cfg,
+                             manifest):
+    cli_var_overrides = project_cfg.get('cli_vars', {})
 
     context = _add_tracking(context)
     context = _add_validation(context)
@@ -333,11 +426,53 @@ def generate(model, project, flat_graph, provider=None):
 
     # we make a copy of the context for each of these ^^
 
-    context = _add_macros(context, model, flat_graph)
+    context = _add_macros(context, model, manifest)
 
-    context["write"] = write(model, project.get('target-path'), 'run')
-    context["render"] = render(context, model)
-    context["var"] = Var(model, context=context)
+    context["write"] = write(model_dict, project_cfg.get('target-path'), 'run')
+    context["render"] = render(context, model_dict)
+    context["var"] = Var(model, context=context, overrides=cli_var_overrides)
     context['context'] = context
 
     return context
+
+
+def generate_operation_macro(model, project_cfg, manifest, provider):
+    """This is an ugly hack to support the fact that the `docs generate`
+    operation ends up in here, and macros are not nodes.
+    """
+    model_dict = model.serialize()
+    context = generate_base(model, model_dict, project_cfg, manifest,
+                            None, provider)
+
+    return modify_generated_context(context, model, model_dict, project_cfg,
+                                    manifest)
+
+
+def generate_model(model, project_cfg, manifest, source_config, provider):
+    model_dict = model.to_dict()
+    context = generate_base(model, model_dict, project_cfg, manifest,
+                            source_config, provider)
+    # overwrite schema if we have it, and hooks + sql
+    context.update({
+        'schema': model.get('schema', context['schema']),
+        'pre_hooks': model.config.get('pre-hook'),
+        'post_hooks': model.config.get('post-hook'),
+        'sql': model.get('injected_sql'),
+    })
+
+    return modify_generated_context(context, model, model_dict, project_cfg,
+                                    manifest)
+
+
+def generate(model, project_cfg, manifest, source_config=None, provider=None):
+    """
+    Not meant to be called directly. Call with either:
+        dbt.context.parser.generate
+    or
+        dbt.context.runtime.generate
+    """
+    if isinstance(model, ParsedMacro):
+        return generate_operation_macro(model, project_cfg, manifest, provider)
+    else:
+        return generate_model(model, project_cfg, manifest, source_config,
+                              provider)

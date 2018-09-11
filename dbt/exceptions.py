@@ -2,6 +2,7 @@ from dbt.compat import basestring
 from dbt.logger import GLOBAL_LOGGER as logger
 import rollbar
 import os
+import re
 
 
 class Exception(BaseException):
@@ -107,6 +108,20 @@ class ValidationException(RuntimeException):
     pass
 
 
+class JSONValidationException(ValidationException):
+    def __init__(self, typename, errors):
+        self.typename = typename
+        self.errors = errors
+        self.errors_message = ', '.join(errors)
+        msg = ('Invalid arguments passed to "{}" instance: {}'.format(
+                self.typename, self.errors_message))
+        super(JSONValidationException, self).__init__(msg)
+
+    def __reduce__(self):
+        # see https://stackoverflow.com/a/36342588 for why this is necessary
+        return (JSONValidationException, (self.typename, self.errors))
+
+
 class ParsingException(Exception):
     pass
 
@@ -178,12 +193,38 @@ This typically happens when ref() is placed within a conditional block.
 To fix this, add the following hint to the top of the model "{model_name}":
 
 -- depends_on: {ref_string}"""
+    # This explicitly references model['name'], instead of model['alias'], for
+    # better error messages. Ex. If models foo_users and bar_users are aliased
+    # to 'users', in their respective schemas, then you would want to see
+    # 'bar_users' in your error messge instead of just 'users'.
     error_msg = base_error_msg.format(
         model_name=model['name'],
         model_path=model['path'],
         ref_string=ref_string
     )
     raise_compiler_error(error_msg, model)
+
+
+def doc_invalid_args(model, args):
+    raise_compiler_error(
+        "doc() takes at most two arguments ({} given)".format(len(args)),
+        model)
+
+
+def doc_target_not_found(model, target_doc_name, target_doc_package):
+    target_package_string = ''
+
+    if target_doc_package is not None:
+        target_package_string = "in package '{}' ".format(target_doc_package)
+
+    msg = (
+        "Documentation for '{}' depends on doc '{}' {} which was not found"
+    ).format(
+        model.get('unique_id'),
+        target_doc_name,
+        target_package_string
+    )
+    raise_compiler_error(msg, model)
 
 
 def get_target_not_found_msg(model, target_model_name, target_model_package):
@@ -227,6 +268,7 @@ def macro_not_found(model, target_macro_id):
 
 
 def materialization_not_available(model, adapter_type):
+    from dbt.utils import get_materialization  # noqa
     materialization = get_materialization(model)
 
     raise_compiler_error(
@@ -236,6 +278,7 @@ def materialization_not_available(model, adapter_type):
 
 
 def missing_materialization(model, adapter_type):
+    from dbt.utils import get_materialization  # noqa
     materialization = get_materialization(model)
 
     valid_types = "'default'"
@@ -262,9 +305,21 @@ def missing_config(model, name):
         model)
 
 
-def missing_relation(relation_name, model=None):
+def missing_relation(relation, model=None):
     raise_compiler_error(
-        "Relation {} not found!".format(relation_name),
+        "Relation {} not found!".format(relation),
+        model)
+
+
+def relation_wrong_type(relation, expected_type, model=None):
+    raise_compiler_error(
+        ('Trying to create {expected_type} {relation}, '
+         'but it currently exists as a {current_type}. Either '
+         'drop {relation} manually, or run dbt with '
+         '`--full-refresh` and dbt will drop it for you.')
+        .format(relation=relation,
+                current_type=relation.type,
+                expected_type=expected_type),
         model)
 
 
@@ -305,3 +360,107 @@ def raise_dep_not_found(node, node_description, required_pkg):
         'Error while parsing {}.\nThe required package "{}" was not found. '
         'Is the package installed?\nHint: You may need to run '
         '`dbt deps`.'.format(node_description, required_pkg), node=node)
+
+
+def multiple_matching_relations(kwargs, matches):
+    raise_compiler_error(
+        'get_relation returned more than one relation with the given args. '
+        'Please specify a database or schema to narrow down the result set.'
+        '\n{}\n\n{}'
+        .format(kwargs, matches))
+
+
+def get_relation_returned_multiple_results(kwargs, matches):
+    multiple_matching_relations(kwargs, matches)
+
+
+def approximate_relation_match(target, relation):
+    raise_compiler_error(
+        'When searching for a relation, dbt found an approximate match. '
+        'Instead of guessing \nwhich relation to use, dbt will move on. '
+        'Please delete {relation}, or rename it to be less ambiguous.'
+        '\nSearched for: {target}\nFound: {relation}'
+        .format(target=target,
+                relation=relation))
+
+
+def raise_duplicate_resource_name(node_1, node_2):
+    duped_name = node_1['name']
+
+    raise_compiler_error(
+        'dbt found two resources with the name "{}". Since these resources '
+        'have the same name,\ndbt will be unable to find the correct resource '
+        'when ref("{}") is used. To fix this,\nchange the name of one of '
+        'these resources:\n- {} ({})\n- {} ({})'.format(
+            duped_name,
+            duped_name,
+            node_1['unique_id'], node_1['original_file_path'],
+            node_2['unique_id'], node_2['original_file_path']))
+
+
+def raise_ambiguous_alias(node_1, node_2):
+    duped_name = "{}.{}".format(node_1['schema'], node_1['alias'])
+
+    raise_compiler_error(
+        'dbt found two resources with the database representation "{}".\ndbt '
+        'cannot create two resources with identical database representations. '
+        'To fix this,\nchange the "schema" or "alias" configuration of one of '
+        'these resources:\n- {} ({})\n- {} ({})'.format(
+            duped_name,
+            node_1['unique_id'], node_1['original_file_path'],
+            node_2['unique_id'], node_2['original_file_path']))
+
+
+def raise_ambiguous_catalog_match(unique_id, match_1, match_2):
+
+    def get_match_string(match):
+        return "{}.{}".format(
+                match.get('metadata', {}).get('schema'),
+                match.get('metadata', {}).get('name'))
+
+    raise_compiler_error(
+        'dbt found two relations in your warehouse with similar database '
+        'identifiers. dbt\nis unable to determine which of these relations '
+        'was created by the model "{unique_id}".\nIn order for dbt to '
+        'correctly generate the catalog, one of the following relations must '
+        'be deleted or renamed:\n\n - {match_1_s}\n - {match_2_s}'.format(
+            unique_id=unique_id,
+            match_1_s=get_match_string(match_1),
+            match_2_s=get_match_string(match_2),
+        ))
+
+
+def raise_patch_targets_not_found(patches):
+    patch_list = '\n\t'.join(
+        'model {} (referenced in path {})'.format(p.name, p.original_file_path)
+        for p in patches.values()
+    )
+    raise_compiler_error(
+        'dbt could not find models for the following patches:\n\t{}'.format(
+            patch_list
+        )
+    )
+
+
+def raise_duplicate_patch_name(name, patch_1, patch_2):
+    raise_compiler_error(
+        'dbt found two schema.yml entries for the same model named {}. The '
+        'first patch was specified in {} and the second in {}. Models and '
+        'their associated columns may only be described a single time.'.format(
+            name,
+            patch_1,
+            patch_2,
+        )
+    )
+
+
+def raise_incorrect_version(path):
+    raise_compiler_error(
+        'The schema file at {} does not contain a valid version specifier. '
+        'dbt assumes that schema.yml files without version specifiers are '
+        'version 1 schemas, but this file looks like a version 2 schema. If '
+        'this is the case, you can fix this error by adding `version: 2` to '
+        'the top of the file.\n\nOtherwise, please consult the documentation '
+        'for more information on schema.yml syntax:\n\n'
+        'https://docs.getdbt.com/v0.11/docs/schemayml-files'.format(path)
+    )

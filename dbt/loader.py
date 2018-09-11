@@ -1,40 +1,43 @@
 import dbt.exceptions
-import dbt.parser
 
 from dbt.node_types import NodeType
+from dbt.contracts.graph.manifest import Manifest
+from dbt.utils import timestring
+
+import dbt.parser
 
 
 class GraphLoader(object):
 
-    _LOADERS = {'nodes': [], 'macros': []}
+    _LOADERS = []
 
     @classmethod
-    def load_all(cls, root_project, all_projects):
-        to_return = {}
-
-        subgraphs = ['nodes', 'macros']
-
+    def load_all(cls, project_obj, all_projects):
+        root_project = project_obj.cfg
         macros = MacroLoader.load_all(root_project, all_projects)
-        for subgraph in subgraphs:
-            subgraph_nodes = {}
+        macros.update(OperationLoader.load_all(root_project, all_projects))
+        nodes = {}
+        for loader in cls._LOADERS:
+            nodes.update(loader.load_all(root_project, all_projects, macros))
+        docs = DocumentationLoader.load_all(root_project, all_projects)
 
-            for loader in cls._LOADERS[subgraph]:
-                subgraph_nodes.update(
-                    loader.load_all(root_project, all_projects, macros))
+        tests, patches = SchemaTestLoader.load_all(root_project, all_projects)
 
-            to_return[subgraph] = subgraph_nodes
+        manifest = Manifest(nodes=nodes, macros=macros, docs=docs,
+                            generated_at=timestring(), project=project_obj)
+        manifest.add_nodes(tests)
+        manifest.patch_nodes(patches)
 
-        to_return['macros'] = macros
-        return to_return
+        manifest = dbt.parser.ParserUtils.process_refs(
+            manifest,
+            root_project.get('name')
+        )
+        manifest = dbt.parser.ParserUtils.process_docs(manifest, root_project)
+        return manifest
 
     @classmethod
-    def register(cls, loader, subgraph='nodes'):
-        if subgraph not in ['nodes', 'macros']:
-            raise dbt.exceptions.InternalException(
-                'Invalid subgraph type {}, should be "nodes" or "macros"!'
-                .format(subgraph))
-
-        cls._LOADERS[subgraph].append(loader)
+    def register(cls, loader):
+        cls._LOADERS.append(loader)
 
 
 class ResourceLoader(object):
@@ -61,7 +64,7 @@ class MacroLoader(ResourceLoader):
     @classmethod
     def load_project(cls, root_project, all_projects, project, project_name,
                      macros):
-        return dbt.parser.load_and_parse_macros(
+        return dbt.parser.MacroParser.load_and_parse(
             package_name=project_name,
             root_project=root_project,
             all_projects=all_projects,
@@ -84,22 +87,12 @@ class ModelLoader(ResourceLoader):
 
             to_return.update(project_loaded)
 
-        # Check for duplicate model names
-        names_models = {}
-        for model, attribs in to_return.items():
-            name = attribs['name']
-            existing_name = names_models.get(name)
-            if existing_name is not None:
-                raise dbt.exceptions.CompilationException(
-                    'Found models with the same name: \n- %s\n- %s' % (
-                        model, existing_name))
-            names_models[name] = model
         return to_return
 
     @classmethod
     def load_project(cls, root_project, all_projects, project, project_name,
                      macros):
-        return dbt.parser.load_and_parse_sql(
+        return dbt.parser.ModelParser.load_and_parse(
                 package_name=project_name,
                 root_project=root_project,
                 all_projects=all_projects,
@@ -109,12 +102,26 @@ class ModelLoader(ResourceLoader):
                 macros=macros)
 
 
+class OperationLoader(ResourceLoader):
+
+    @classmethod
+    def load_project(cls, root_project, all_projects, project, project_name,
+                     macros):
+        return dbt.parser.MacroParser.load_and_parse(
+            package_name=project_name,
+            root_project=root_project,
+            all_projects=all_projects,
+            root_dir=project.get('project-root'),
+            relative_dirs=project.get('macro-paths', []),
+            resource_type=NodeType.Operation)
+
+
 class AnalysisLoader(ResourceLoader):
 
     @classmethod
     def load_project(cls, root_project, all_projects, project, project_name,
                      macros):
-        return dbt.parser.load_and_parse_sql(
+        return dbt.parser.AnalysisParser.load_and_parse(
             package_name=project_name,
             root_project=root_project,
             all_projects=all_projects,
@@ -125,11 +132,32 @@ class AnalysisLoader(ResourceLoader):
 
 
 class SchemaTestLoader(ResourceLoader):
+    @classmethod
+    def load_all(cls, root_project, all_projects, macros=None):
+        tests = {}
+        patches = {}
+        for project_name, project in all_projects.items():
+            project_tests, project_patches = cls.load_project(
+                root_project, all_projects, project, project_name, macros
+            )
+            for unique_id, test in project_tests.items():
+                if unique_id in tests:
+                    dbt.exceptions.raise_duplicate_resource_name(
+                        test, tests[unique_id],
+                    )
+                tests[unique_id] = test
+
+            for name, patch in project_patches.items():
+                if name in patches:
+                    dbt.exceptions.raise_duplicate_patch_name(name, patch,
+                                                              patches[name])
+                patches[name] = patch
+        return tests, patches
 
     @classmethod
     def load_project(cls, root_project, all_projects, project, project_name,
                      macros):
-        return dbt.parser.load_and_parse_yml(
+        return dbt.parser.SchemaParser.load_and_parse(
             package_name=project_name,
             root_project=root_project,
             all_projects=all_projects,
@@ -143,14 +171,14 @@ class DataTestLoader(ResourceLoader):
     @classmethod
     def load_project(cls, root_project, all_projects, project, project_name,
                      macros):
-        return dbt.parser.load_and_parse_sql(
+        return dbt.parser.DataTestParser.load_and_parse(
             package_name=project_name,
             root_project=root_project,
             all_projects=all_projects,
             root_dir=project.get('project-root'),
             relative_dirs=project.get('test-paths', []),
             resource_type=NodeType.Test,
-            tags={'data'},
+            tags=['data'],
             macros=macros)
 
 
@@ -164,7 +192,7 @@ class ArchiveLoader(ResourceLoader):
 
     @classmethod
     def load_project(cls, root_project, all_projects, macros):
-        return dbt.parser.parse_archives_from_projects(root_project,
+        return dbt.parser.ArchiveParser.load_and_parse(root_project,
                                                        all_projects,
                                                        macros)
 
@@ -177,8 +205,8 @@ class RunHookLoader(ResourceLoader):
 
     @classmethod
     def load_project(cls, root_project, all_projects, macros):
-        return dbt.parser.load_and_parse_run_hooks(root_project, all_projects,
-                                                   macros)
+        return dbt.parser.HookParser.load_and_parse(root_project, all_projects,
+                                                    macros)
 
 
 class SeedLoader(ResourceLoader):
@@ -186,21 +214,30 @@ class SeedLoader(ResourceLoader):
     @classmethod
     def load_project(cls, root_project, all_projects, project, project_name,
                      macros):
-        return dbt.parser.load_and_parse_seeds(
+        return dbt.parser.SeedParser.load_and_parse(
             package_name=project_name,
             root_project=root_project,
             all_projects=all_projects,
             root_dir=project.get('project-root'),
             relative_dirs=project.get('data-paths', []),
-            resource_type=NodeType.Seed,
             macros=macros)
 
 
+class DocumentationLoader(ResourceLoader):
+    @classmethod
+    def load_project(cls, root_project, all_projects, project, project_name,
+                     macros):
+        return dbt.parser.DocumentationParser.load_and_parse(
+            package_name=project_name,
+            root_project=root_project,
+            all_projects=all_projects,
+            root_dir=project.get('project-root'),
+            relative_dirs=project.get('docs-paths', []))
+
 # node loaders
-GraphLoader.register(ModelLoader, 'nodes')
-GraphLoader.register(AnalysisLoader, 'nodes')
-GraphLoader.register(SchemaTestLoader, 'nodes')
-GraphLoader.register(DataTestLoader, 'nodes')
-GraphLoader.register(RunHookLoader, 'nodes')
-GraphLoader.register(ArchiveLoader, 'nodes')
-GraphLoader.register(SeedLoader, 'nodes')
+GraphLoader.register(ModelLoader)
+GraphLoader.register(AnalysisLoader)
+GraphLoader.register(DataTestLoader)
+GraphLoader.register(RunHookLoader)
+GraphLoader.register(ArchiveLoader)
+GraphLoader.register(SeedLoader)

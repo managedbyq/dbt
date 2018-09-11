@@ -14,14 +14,14 @@
 
 {% macro column_list(columns) %}
   {%- for col in columns %}
-    "{{ col.name }}" {% if not loop.last %},{% endif %}
+    {{ adapter.quote(col.name) }} {% if not loop.last %},{% endif %}
   {% endfor -%}
 {% endmacro %}
 
 
 {% macro column_list_for_create_table(columns) %}
   {%- for col in columns %}
-    "{{ col.name }}" {{ col.data_type }} {%- if not loop.last %},{% endif %}
+    {{ adapter.quote(col.name) }} {{ col.data_type }} {%- if not loop.last %},{% endif %}
   {% endfor -%}
 {% endmacro %}
 
@@ -45,10 +45,8 @@
     {{ make_hook_config(sql, inside_transaction=False) }}
 {% endmacro %}
 
-
-{% macro drop_if_exists(existing, schema, name) %}
-  {% set existing_type = existing.get(name) %}
-  {% if existing_type is not none %}
-    {{ adapter.drop(schema, name, existing_type) }}
+{% macro drop_relation_if_exists(relation) %}
+  {% if relation is not none %}
+    {{ adapter.drop_relation(relation) }}
   {% endif %}
 {% endmacro %}

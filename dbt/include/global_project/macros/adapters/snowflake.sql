@@ -1,10 +1,13 @@
-{% macro snowflake__create_table_as(temporary, identifier, sql) -%}
+{% macro snowflake__create_table_as(temporary, relation, sql) -%}
   {% if temporary %}
-    use schema "{{ schema }}";
+    use schema {{ adapter.quote_as_configured(schema, 'schema') }};
   {% endif %}
 
-  create {% if temporary: -%}temporary{%- endif %} table
-    {% if not temporary: -%}"{{ schema }}".{%- endif %}"{{ identifier }}" as (
+  {{ default__create_table_as(temporary, relation, sql) }}
+{% endmacro %}
+
+{% macro snowflake__create_view_as(relation, sql) -%}
+  create or replace view {{ relation }} as (
     {{ sql }}
   );
 {% endmacro %}

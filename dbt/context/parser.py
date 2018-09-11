@@ -1,32 +1,54 @@
-import dbt.utils
 import dbt.exceptions
 
 import dbt.context.common
-
-from dbt.adapters.factory import get_adapter
 
 
 execute = False
 
 
-def ref(model, project, profile, flat_graph):
+def ref(db_wrapper, model, project_cfg, profile, manifest):
 
     def ref(*args):
         if len(args) == 1 or len(args) == 2:
-            model['refs'].append(args)
+            model.refs.append(list(args))
 
         else:
             dbt.exceptions.ref_invalid_args(model, args)
 
-        adapter = get_adapter(profile)
-        return dbt.utils.Relation(profile, adapter, model)
+        return db_wrapper.adapter.Relation.create_from_node(profile, model)
 
     return ref
 
 
+def docs(unparsed, docrefs, column_name=None):
+
+    def do_docs(*args):
+        if len(args) != 1 and len(args) != 2:
+            dbt.exceptions.doc_invalid_args(unparsed, args)
+        doc_package_name = ''
+        doc_name = args[0]
+        if len(args) == 2:
+            doc_package_name = args[1]
+
+        docref = {
+            'documentation_package': doc_package_name,
+            'documentation_name': doc_name,
+        }
+        if column_name is not None:
+            docref['column_name'] = column_name
+
+        docrefs.append(docref)
+
+        # IDK
+        return True
+
+    return do_docs
+
+
 class Config:
-    def __init__(self, model):
+    def __init__(self, model, source_config):
         self.model = model
+        self.source_config = source_config
 
     def __call__(self, *args, **kwargs):
         if len(args) == 1 and len(kwargs) == 0:
@@ -38,7 +60,7 @@ class Config:
                 "Invalid inline model config",
                 self.model)
 
-        self.model['config_reference'].update_in_model_config(opts)
+        self.source_config.update_in_model_config(opts)
         return ''
 
     def set(self, name, value):
@@ -51,6 +73,6 @@ class Config:
         return ''
 
 
-def generate(model, project, flat_graph):
+def generate(model, project_cfg, manifest, source_config):
     return dbt.context.common.generate(
-        model, project, flat_graph, dbt.context.parser)
+        model, project_cfg, manifest, source_config, dbt.context.parser)
